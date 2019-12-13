@@ -1479,6 +1479,13 @@ int64_t GetProofOfStakeReward(int64_t nCoinAge, int nHeight)
             nSubsidy = nSubsidy - difference;
         }
     }
+    if (nHeight >= 2300000)
+    {
+        if(nSubsidy > 1000 * COIN)
+        {
+            nSubsidy = 1000 * COIN;
+        }
+    }
     LogPrint("kernel", "GetProofOfStakeReward(): create=%s nCoinAge=%d\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
     return nSubsidy;
 }
