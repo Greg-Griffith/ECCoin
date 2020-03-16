@@ -30,51 +30,6 @@ void EnterCritical(const char *pszName,
 }
 
 void LeaveCritical(void *cs) { remove_lock_critical_exit(cs); }
-void AssertLockHeldInternal(const char *pszName, const char *pszFile, unsigned int nLine, void *cs)
-{
-    std::lock_guard<std::mutex> lock(lockdata.dd_mutex);
-    uint64_t tid = getTid();
-    auto self_iter = lockdata.locksheldbythread.find(tid);
-    if (self_iter == lockdata.locksheldbythread.end())
-    {
-        return;
-    }
-    if (self_iter->second.empty())
-    {
-        return;
-    }
-    for (auto &entry : self_iter->second)
-    {
-        if (entry.first == cs)
-        {
-            // found the lock so return
-            return;
-        }
-    }
-    fprintf(stderr, "Assertion failed: lock %s not held in %s:%i; locks held:\n%s", pszName, pszFile, nLine,
-        _LocksHeld().c_str());
-    abort();
-}
-
-void AssertLockNotHeldInternal(const char *pszName, const char *pszFile, unsigned int nLine, void *cs)
-{
-    std::lock_guard<std::mutex> lock(lockdata.dd_mutex);
-    uint64_t tid = getTid();
-    auto self_iter = lockdata.locksheldbythread.find(tid);
-    if (self_iter != lockdata.locksheldbythread.end() && self_iter->second.empty() == false)
-    {
-        for (auto &entry : self_iter->second)
-        {
-            if (entry.first == cs)
-            {
-                fprintf(stderr, "Assertion failed: lock %s held in %s:%i; locks held:\n%s", pszName, pszFile, nLine,
-                    _LocksHeld().c_str());
-                abort();
-            }
-        }
-    }
-}
-
 void AssertWriteLockHeldInternal(const char *pszName,
     const char *pszFile,
     unsigned int nLine,
@@ -127,7 +82,7 @@ CCriticalSection::~CCriticalSection()
         fflush(stdout);
     }
 #endif
-    DeleteLock((void *)this);
+    DeleteCritical((void *)this);
 }
 
 // BU normally CSharedCriticalSection is a typedef, but when lockorder debugging is on we need to delete the critical
@@ -154,7 +109,7 @@ CSharedCriticalSection::~CSharedCriticalSection()
         fflush(stdout);
     }
 #endif
-    DeleteLock((void *)this);
+    DeleteCritical((void *)this);
 }
 
 CRecursiveSharedCriticalSection::CRecursiveSharedCriticalSection() : name(NULL) {}
@@ -179,7 +134,7 @@ CRecursiveSharedCriticalSection::~CRecursiveSharedCriticalSection()
         fflush(stdout);
     }
 #endif
-    DeleteLock((void *)this);
+    DeleteCritical((void *)this);
 }
 
 

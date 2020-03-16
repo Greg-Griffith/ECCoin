@@ -11,21 +11,42 @@
 
 #ifdef DEBUG_LOCKORDER // this ifdef covers the rest of the file
 
-void CLockOrderTracker::potential_lock_order_issue_detected(const CLockLocation &thisLock,
-    const CLockLocation &otherLock,
+void CLockOrderTracker::potential_lock_order_issue_detected(LockStackEntry &this_lock,
+    LockStackEntry &other_lock,
     const uint64_t &tid)
 {
+    bool possible_misname = false;
+    if (mapMutexToName.count(this_lock.first) == 0)
+    {
+        throw std::logic_error("critical deadlock order error somewhere");
+    }
+    possible_misname = possible_misname || mapMutexToName[this_lock.first].second;
+
+    if (mapMutexToName.count(other_lock.first) == 0)
+    {
+        throw std::logic_error("critical deadlock order error somewhere");
+    }
+    possible_misname = possible_misname || mapMutexToName[other_lock.first].second;
+
+    CLockLocation &thisLock = this_lock.second;
+    CLockLocation &otherLock = other_lock.second;
+
     LogPrintf("POTENTIAL LOCK ORDER ISSUE DETECTED\n");
-    LogPrintf(
-        "This occurred while trying to lock: %s after %s \n", thisLock.mutexName.c_str(), otherLock.mutexName.c_str());
+    if (possible_misname == true)
+    {
+        LogPrintf("either %s or %s was passed by a pointer, the lock names might not be accurate \n",
+            thisLock.GetMutexName().c_str(), otherLock.GetMutexName().c_str());
+    }
+    LogPrintf("This occurred while trying to lock: %s after %s \n", thisLock.GetMutexName().c_str(),
+        otherLock.GetMutexName().c_str());
     LogPrintf("Thread with id %" PRIu64
-              " attempted to lock %s on line %i in file %s after locking %s on line %i in file %s\n",
-        tid, thisLock.mutexName.c_str(), thisLock.sourceLine, thisLock.sourceFile.c_str(), otherLock.mutexName.c_str(),
-        otherLock.sourceLine, otherLock.sourceFile.c_str());
+         " attempted to lock %s on line %i in file %s after locking %s on line %i in file %s\n",
+        tid, thisLock.GetMutexName().c_str(), thisLock.GetLineNumber(), thisLock.GetFileName().c_str(),
+        otherLock.GetMutexName().c_str(), otherLock.GetLineNumber(), otherLock.GetFileName().c_str());
     LogPrintf("We have previously locked these locks in the reverse order\n");
     LogPrintf("\n\nOur historical lock orderings containing these two locks by thread %" PRIu64 " include: \n", tid);
 
-    std::pair<std::string, std::string> key = std::make_pair(otherLock.mutexName, thisLock.mutexName);
+    std::pair<std::string, std::string> key = std::make_pair(otherLock.GetMutexName(), thisLock.GetMutexName());
     auto iter = seenLockLocations.find(key);
     if (iter != seenLockLocations.end())
     {
@@ -53,66 +74,91 @@ void CLockOrderTracker::potential_lock_order_issue_detected(const CLockLocation 
     throw std::logic_error("potential lock order issue detected");
 }
 
-bool CLockOrderTracker::CanCheckForConflicts(const std::string &lockname)
-{
-    std::lock_guard<std::mutex> lock(lot_mutex);
-    return (seenLockOrders.find(lockname) != seenLockOrders.end());
-}
-
 // this function assumes you already checked if lockname exists
-void CLockOrderTracker::CheckForConflict(const CLockLocation &locklocation,
-    const std::vector<CLockLocation> &heldLocks,
+void CLockOrderTracker::CheckForConflict(LockStackEntry &this_lock,
+    std::vector<LockStackEntry> &heldLocks,
     const uint64_t &tid)
 {
     std::lock_guard<std::mutex> lock(lot_mutex);
-    std::string newlock = locklocation.mutexName;
+    if (seenLockOrders.find(this_lock.first) == seenLockOrders.end())
+    {
+        return;
+    }
     for (auto &heldLock : heldLocks)
     {
-        std::string lockheldname = heldLock.mutexName;
-        if (newlock == lockheldname)
+        if (this_lock.first == heldLock.first)
         {
             // if they are the same then continue
             continue;
         }
-        if (seenLockOrders[newlock].count(lockheldname))
+        if (seenLockOrders[this_lock.first].count(heldLock.first))
         {
-            potential_lock_order_issue_detected(locklocation, heldLock, tid);
+            potential_lock_order_issue_detected(this_lock, heldLock, tid);
         }
-        seenLockOrders[lockheldname].emplace(newlock);
     }
 }
 
-void CLockOrderTracker::AddNewLockInfo(const std::string &lockname, const std::vector<CLockLocation> &heldLocks)
+void CLockOrderTracker::AddNewLockInfo(const LockStackEntry &this_lock, const std::vector<LockStackEntry> &heldLocks)
 {
     std::lock_guard<std::mutex> lock(lot_mutex);
-    // we have not seen the lock we are trying to lock before, add data for it
+
+    auto name_iter = mapMutexToName.find(this_lock.first);
+    if (name_iter == mapMutexToName.end())
+    {
+        mapMutexToName.emplace(this_lock.first, std::make_pair(this_lock.second.GetMutexName(), true));
+    }
+    else
+    {
+        if (name_iter->second.first != this_lock.second.GetMutexName())
+        {
+            name_iter->second.second = false;
+        }
+    }
     for (auto &heldLock : heldLocks)
     {
-        auto heldLockIter = seenLockOrders.find(heldLock.mutexName);
-        if (heldLockIter != seenLockOrders.end())
+        auto heldLockIter = seenLockOrders.find(heldLock.first);
+        if (heldLockIter == seenLockOrders.end())
         {
-            // add information about this lock
-            heldLockIter->second.emplace(lockname);
+            continue;
+        }
+        // add information about this lock
+        for (auto &otherLock : seenLockOrders)
+        {
+            if (otherLock.first != this_lock.first)
+            {
+                if (otherLock.second.count(heldLock.first) != 0 || otherLock.first == heldLock.first)
+                {
+                    otherLock.second.emplace(this_lock.first);
+                    auto this_lock_iter = seenLockOrders.find(this_lock.first);
+                    if (this_lock_iter != seenLockOrders.end())
+                    {
+                        for (auto &element : this_lock_iter->second)
+                        {
+                            otherLock.second.emplace(element);
+                        }
+                    }
+                }
+            }
         }
     }
     // add a new key to track locks locked after this one
-    if (seenLockOrders.find(lockname) == seenLockOrders.end())
+    if (seenLockOrders.find(this_lock.first) == seenLockOrders.end())
     {
-        seenLockOrders.emplace(lockname, std::set<std::string>());
+        seenLockOrders.emplace(this_lock.first, std::set<void *>());
     }
 }
 
 void CLockOrderTracker::TrackLockOrderHistory(const CLockLocation &locklocation,
-    const std::vector<CLockLocation> &heldLocks,
+    const std::vector<LockStackEntry> &heldLocks,
     const uint64_t &tid)
 {
     std::lock_guard<std::mutex> lock(lot_mutex);
-    std::string key1 = locklocation.mutexName;
-    std::string value1 = locklocation.sourceFile + ":" + std::to_string(locklocation.sourceLine);
+    std::string key1 = locklocation.GetMutexName();
+    std::string value1 = locklocation.GetFileName() + ":" + std::to_string(locklocation.GetLineNumber());
     for (auto &heldLock : heldLocks)
     {
-        std::string key2 = heldLock.mutexName;
-        std::string value2 = heldLock.sourceFile + ":" + std::to_string(heldLock.sourceLine);
+        std::string key2 = heldLock.second.GetMutexName();
+        std::string value2 = heldLock.second.GetFileName() + ":" + std::to_string(heldLock.second.GetLineNumber());
         auto iter = seenLockLocations.find(std::make_pair(key1, key2));
         if (iter == seenLockLocations.end())
         {

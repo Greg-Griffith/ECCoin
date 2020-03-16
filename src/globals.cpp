@@ -14,6 +14,7 @@
 #include "wallet/wallet.h"
 
 #ifdef DEBUG_LOCKORDER
+std::atomic<bool> lockdataDestructed{false};
 LockData lockdata;
 #endif
 

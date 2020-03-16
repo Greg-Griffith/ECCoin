@@ -20,37 +20,49 @@ BOOST_FIXTURE_TEST_SUITE(deadlock_test5, EmptySuite)
 
 #ifdef DEBUG_LOCKORDER // this ifdef covers the rest of the file
 
+CSharedCriticalSection mutexA;
+CSharedCriticalSection mutexB;
 std::atomic<bool> done{false};
 std::atomic<int> lock_exceptions{0};
 std::atomic<int> writelocks{0};
 
-void TestThread(CSharedCriticalSection *mutexA, CSharedCriticalSection *mutexB)
+void TestThread1()
 {
-    WRITELOCK(*mutexA);
+    WRITELOCK(mutexA);
     writelocks++;
-    while (writelocks != 2)
-        ;
+    while(writelocks != 2) ;
     try
     {
-        READLOCK(*mutexB);
+        READLOCK(mutexB);
     }
-    catch (const std::logic_error &)
+    catch (const std::logic_error&)
     {
         lock_exceptions++;
     }
-    while (!done)
-        ;
+    while (!done) ;
+}
+
+void TestThread2()
+{
+    WRITELOCK(mutexB);
+    writelocks++;
+    while(writelocks != 2) ;
+    try
+    {
+        READLOCK(mutexA);
+    }
+    catch (const std::logic_error&)
+    {
+        lock_exceptions++;
+    }
+    while (!done) ;
 }
 
 BOOST_AUTO_TEST_CASE(TEST_5)
 {
-    CSharedCriticalSection mutexA;
-    CSharedCriticalSection mutexB;
-
-    std::thread thread1(TestThread, &mutexA, &mutexB);
-    std::thread thread2(TestThread, &mutexB, &mutexA);
-    while (!lock_exceptions)
-        ;
+    std::thread thread1(TestThread1);
+    std::thread thread2(TestThread2);
+    while(!lock_exceptions) ;
     done = true;
     thread1.join();
     thread2.join();
@@ -60,7 +72,10 @@ BOOST_AUTO_TEST_CASE(TEST_5)
 
 #else
 
-BOOST_AUTO_TEST_CASE(EMPTY_TEST_5) {}
+BOOST_AUTO_TEST_CASE(EMPTY_TEST_5)
+{
+
+}
 
 #endif
 

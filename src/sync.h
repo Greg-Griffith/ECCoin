@@ -258,7 +258,6 @@ private:
         line = nLine;
         EnterCritical(pszName, pszFile, nLine, (void *)(lock.mutex()), type, OwnershipType::EXCLUSIVE, false);
         lock.lock();
-        SetWaitingToHeld((void *)(lock.mutex()), OwnershipType::EXCLUSIVE);
 #ifdef DEBUG_LOCKTIME
         lockedTime = GetStopwatch();
         if (lockedTime - startWait > LOCK_WARN_TIME)
@@ -363,7 +362,6 @@ private:
         line = nLine;
         EnterCritical(pszName, pszFile, nLine, (void *)(lock.mutex()), type, OwnershipType::SHARED, false);
         lock.lock();
-        SetWaitingToHeld((void *)(lock.mutex()), OwnershipType::SHARED);
 #ifdef DEBUG_LOCKTIME
         lockedTime = GetStopwatch();
         if (lockedTime - startWait > LOCK_WARN_TIME)
