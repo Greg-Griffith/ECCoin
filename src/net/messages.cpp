@@ -2614,20 +2614,21 @@ bool SendMessages(CNode *pto, CConnman &connman)
     //
     std::vector<CInv> vInv;
     {
-        LOCK(pto->cs_inventory);
-        vInv.reserve(std::max<size_t>(pto->vInventoryBlockToSend.size(), INVENTORY_BROADCAST_MAX));
-
-        // Add blocks
-        for (const uint256 &hash : pto->vInventoryBlockToSend)
         {
-            vInv.push_back(CInv(MSG_BLOCK, hash));
-            if (vInv.size() == MAX_INV_SZ)
+            LOCK(pto->cs_inventory);
+            vInv.reserve(std::max<size_t>(pto->vInventoryBlockToSend.size(), INVENTORY_BROADCAST_MAX));
+            // Add blocks
+            for (const uint256 &hash : pto->vInventoryBlockToSend)
             {
-                connman.PushMessage(pto, NetMsgType::INV, vInv);
-                vInv.clear();
+                vInv.push_back(CInv(MSG_BLOCK, hash));
+                if (vInv.size() == MAX_INV_SZ)
+                {
+                    connman.PushMessage(pto, NetMsgType::INV, vInv);
+                    vInv.clear();
+                }
             }
+            pto->vInventoryBlockToSend.clear();
         }
-        pto->vInventoryBlockToSend.clear();
 
         // Check whether periodic sends should happen
         bool fSendTrickle = pto->fWhitelisted;
@@ -2653,25 +2654,23 @@ bool SendMessages(CNode *pto, CConnman &connman)
         if (fSendTrickle)
         {
             // Produce a vector with all candidates for sending
-            std::vector<std::set<uint256>::iterator> vInvTx;
-            vInvTx.reserve(pto->setInventoryTxToSend.size());
-            for (std::set<uint256>::iterator it = pto->setInventoryTxToSend.begin();
-                 it != pto->setInventoryTxToSend.end(); it++)
+            std::set<uint256> vInvTx;
             {
-                vInvTx.push_back(it);
+                LOCK(pto->cs_inventory);
+                vInvTx.swap(pto->setInventoryTxToSend);
             }
             // No reason to drain out at many times the network's capacity,
             // especially since we have many peers and some will draw much
             // shorter delays.
             unsigned int nRelayedTransactions = 0;
             LOCK(pto->cs_filter);
-            while (!vInvTx.empty() && nRelayedTransactions < INVENTORY_BROADCAST_MAX)
+            for (auto &hash : vInvTx)
             {
-                std::set<uint256>::iterator it = vInvTx.back();
-                vInvTx.pop_back();
-                uint256 hash = *it;
+                if (nRelayedTransactions >= INVENTORY_BROADCAST_MAX)
+                {
+                    break;
+                }
                 // Remove it from the to-be-sent set
-                pto->setInventoryTxToSend.erase(it);
                 // Check if not in the filter already
                 if (pto->filterInventoryKnown.contains(hash))
                 {
