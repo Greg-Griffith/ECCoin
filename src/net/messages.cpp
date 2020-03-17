@@ -2482,10 +2482,15 @@ bool SendMessages(CNode *pto, CConnman &connman)
         // find the first header not yet known to our peer but would connect,
         // and send. If no header would connect, or if we have too many blocks,
         // or if the peer doesn't want headers, just add all to the inv queue.
-        LOCK(pto->cs_inventory);
+        std::vector<uint256> vBlocksToAnnounce;
+        {
+            // Make a copy so that we do not need to keep cs_inventory
+            LOCK(pto->cs_inventory);
+            vBlocksToAnnounce.swap(pto->vBlockHashesToAnnounce);
+        }
         std::vector<CBlock> vHeaders;
-        bool fRevertToInv = ((!state->fPreferHeaders && (pto->vBlockHashesToAnnounce.size() > 1)) ||
-                             pto->vBlockHashesToAnnounce.size() > MAX_BLOCKS_TO_ANNOUNCE);
+        bool fRevertToInv = ((!state->fPreferHeaders && (vBlocksToAnnounce.size() > 1)) ||
+                             vBlocksToAnnounce.size() > MAX_BLOCKS_TO_ANNOUNCE);
         // last header queued for delivery
         CBlockIndex *pBestIndex = nullptr;
         // ensure pindexBestKnownBlock is up-to-date
@@ -2497,7 +2502,7 @@ bool SendMessages(CNode *pto, CConnman &connman)
             // Try to find first header that our peer doesn't have, and then
             // send all headers past that one. If we come across an headers that
             // aren't on chainActive, give up.
-            for (const uint256 &hash : pto->vBlockHashesToAnnounce)
+            for (const uint256 &hash : vBlocksToAnnounce)
             {
                 CBlockIndex *pindex = pnetMan->getChainActive()->LookupBlockIndex(hash);
                 if (!pindex)
@@ -2557,9 +2562,9 @@ bool SendMessages(CNode *pto, CConnman &connman)
             // If falling back to using an inv, just try to inv the tip. The
             // last entry in vBlockHashesToAnnounce was our tip at some point in
             // the past.
-            if (!pto->vBlockHashesToAnnounce.empty())
+            if (!vBlocksToAnnounce.empty())
             {
-                for (const uint256 &hashToAnnounce : pto->vBlockHashesToAnnounce)
+                for (const uint256 &hashToAnnounce : vBlocksToAnnounce)
                 {
                     CBlockIndex *pindex = nullptr;
                     pindex = pnetMan->getChainActive()->LookupBlockIndex(hashToAnnounce);
@@ -2602,7 +2607,6 @@ bool SendMessages(CNode *pto, CConnman &connman)
             connman.PushMessage(pto, NetMsgType::HEADERS, vHeaders);
             CNodeStateAccessor(nodestateman, pto->GetId())->pindexBestHeaderSent = pBestIndex;
         }
-        pto->vBlockHashesToAnnounce.clear();
     }
 
     //
